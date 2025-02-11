@@ -235,7 +235,7 @@ func handleMessage(message *tgbotapi.Message) {
 		err = sendMenu(message.Chat.ID, statsMenu)
 	} else {
 		// Send a message to say you are alive but no action required
-		msg := tgbotapi.NewMessage(message.Chat.ID, "😴")
+		msg := tgbotapi.NewMessage(message.Chat.ID, "...")
 
 		// Send the message
 		if _, err := bot.Send(msg); err != nil {

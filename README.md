@@ -1,0 +1,3 @@
+# Simple Telegram Bot to record Baby Stuff
+
+Mainly just feeds and nappies...
