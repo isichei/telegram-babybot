@@ -4,22 +4,22 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"strings"
-	"time"
 	"sync"
+	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-
 const (
-	EventFeed EventType = "feed"
-	EventFeedL EventType = "feed L"
-	EventFeedR EventType = "feed R"
-	EventNappyPoo EventType = "nappy poo"
-	EventNappyWee EventType = "nappy wee"
+	EventFeed      EventType = "feed"
+	EventFeedL     EventType = "feed L"
+	EventFeedR     EventType = "feed R"
+	EventNappyPoo  EventType = "nappy poo"
+	EventNappyWee  EventType = "nappy wee"
 	EventNappyBoth EventType = "nappy poo and wee"
 )
 
@@ -31,14 +31,14 @@ type Menu struct {
 }
 
 type Event struct {
-	ID  int
+	ID    int
 	Event EventType
-	Time time.Time
+	Time  time.Time
 }
 
 var (
-	bot *tgbotapi.BotAPI
-	err error
+	bot         *tgbotapi.BotAPI
+	err         error
 	events      []Event
 	eventsMutex sync.Mutex // To handle concurrent writes
 )
@@ -61,10 +61,14 @@ func stringToEvent(s string, id int) Event {
 	return Event{id, EventType(parts[1]), eventTime}
 }
 
-//
-func createEventsFromFile() ([]Event, error) {
-	now := time.Now()
-	fileName := fmt.Sprintf("data/event_%d_%d_%d.txt", now.Year(), now.Month(), now.Day())
+func createEventsFromFile(currentDay bool) ([]Event, error) {
+	var d time.Time
+	if currentDay {
+		d = time.Now()
+	} else {
+		d = time.Now().Add(-24 * time.Hour)
+	}
+	fileName := fmt.Sprintf("data/event_%d_%d_%d.txt", d.Year(), d.Month(), d.Day())
 	file, err := os.Open(fileName)
 
 	// Try to open the file
@@ -97,12 +101,23 @@ func createEventsFromFile() ([]Event, error) {
 	return events, nil
 }
 
+func getEventsFromLastTwoFiles() []Event {
+	prevEvents, err := createEventsFromFile(false)
+	if err != nil {
+		log.Panicf("Error creating events from file for day before. %s", err)
+	}
+	todayEvents, err := createEventsFromFile(true)
+	if err != nil {
+		log.Panicf("Error creating events from file for today. %s", err)
+	}
+	return append(prevEvents, todayEvents...)
+}
 
 // saveEventsToFile dumps the events array to a JSON file
 func saveEventsToFile() {
 	eventsMutex.Lock()
 	defer eventsMutex.Unlock()
-	
+
 	now := time.Now()
 	midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	fileName := fmt.Sprintf("data/event_%d_%d_%d.txt", now.Year(), now.Month(), now.Day())
@@ -133,15 +148,24 @@ func addEvent(msg EventType, t time.Time) {
 
 func main() {
 	bot, err = tgbotapi.NewBotAPI(os.Getenv("TELEGRAM_API_KEY"))
+
+	logFile, err := os.OpenFile("bot.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		log.Fatalf("Failed to open log file: %v", err)
+	}
+	defer logFile.Close()
+
+	// Create a multi-writer to write to both stdout and the file
+	multiWriter := io.MultiWriter(os.Stdout, logFile)
+
+	// Set the log output
+	log.SetOutput(multiWriter)
+
 	if err != nil {
 		// Abort if something is wrong
 		log.Panicf("Error creating bot. %s", err)
 	}
-	events, err = createEventsFromFile()
-	if err != nil {
-		log.Panicf("Error creating events file. %s", err)
-	}
-
+	events = getEventsFromLastTwoFiles()
 	// Set this to true to log all interactions with telegram servers
 	bot.Debug = false
 
@@ -249,7 +273,7 @@ func handleMessage(message *tgbotapi.Message) {
 }
 
 func parseEventTypeFromUserMsg(msg string) EventType {
-	// is this a feed message	
+	// is this a feed message
 	if strings.HasPrefix(msg, "feed") {
 		if strings.Contains(msg, " r") {
 			return "feed R"
@@ -300,15 +324,15 @@ func getLastEvent(filterBy string) Event {
 }
 
 func getLastEventResp(filterBy string) string {
-		event := getLastEvent(filterBy)
-		return eventToString(event, false)
+	event := getLastEvent(filterBy)
+	return eventToString(event, false)
 }
 
 func getLastEvents(filterBy string) []Event {
-    dayBefore := time.Now().Add(-24 * time.Hour)
+	dayBefore := time.Now().Add(-24 * time.Hour)
 	filteredEvents := []Event{}
 	if len(events) == 0 {
-		return filteredEvents 
+		return filteredEvents
 	}
 
 	for _, event := range events {
@@ -333,20 +357,20 @@ func handleButton(query *tgbotapi.CallbackQuery) {
 	var botResponse string
 
 	switch query.Data {
-		case "nappy":
-			botResponse = getLastEventResp("nappy")
-			log.Println("Sending last nappy")
-		case "feed":
-			botResponse = getLastEventResp("feed")
-			log.Println("Sending last feed")
-		case "nappy24":
-			botResponse = getLastEventsResp("nappy")	
-			log.Println("Sending the last nappy events over the last 24h")
-		case "feed24":
-			botResponse = getLastEventsResp("feed")	
-			log.Println("Sending the last feed events over the last 24h")
-		default:
-			log.Println("You shouldn't be here")
+	case "nappy":
+		botResponse = getLastEventResp("nappy")
+		log.Println("Sending last nappy")
+	case "feed":
+		botResponse = getLastEventResp("feed")
+		log.Println("Sending last feed")
+	case "nappy24":
+		botResponse = getLastEventsResp("nappy")
+		log.Println("Sending the last nappy events over the last 24h")
+	case "feed24":
+		botResponse = getLastEventsResp("feed")
+		log.Println("Sending the last feed events over the last 24h")
+	default:
+		log.Println("You shouldn't be here")
 	}
 
 	callbackCfg := tgbotapi.NewCallback(query.ID, "")
@@ -354,7 +378,7 @@ func handleButton(query *tgbotapi.CallbackQuery) {
 
 	// Replace menu text and keyboard
 	msg := tgbotapi.NewMessage(message.Chat.ID, botResponse)
-	
+
 	bot.Send(msg)
 }
 
@@ -366,4 +390,3 @@ func sendMenu(chatId int64, menu Menu) error {
 	_, err := bot.Send(msg)
 	return err
 }
-
