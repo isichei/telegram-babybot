@@ -4,11 +4,12 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"io"
 	"log"
 	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -40,7 +41,7 @@ var (
 	bot         *tgbotapi.BotAPI
 	err         error
 	events      []Event
-	eventsMutex sync.Mutex // To handle concurrent writes
+	eventsMutex sync.Mutex
 )
 
 func eventToString(event Event, system bool) string {
@@ -61,6 +62,7 @@ func stringToEvent(s string, id int) Event {
 	return Event{id, EventType(parts[1]), eventTime}
 }
 
+// Create events from txt file log of each days events
 func createEventsFromFile(currentDay bool) ([]Event, error) {
 	var d time.Time
 	if currentDay {
@@ -113,7 +115,7 @@ func getEventsFromLastTwoFiles() []Event {
 	return append(prevEvents, todayEvents...)
 }
 
-// saveEventsToFile dumps the events array to a JSON file
+// Save the events store to simple txt file
 func saveEventsToFile() {
 	eventsMutex.Lock()
 	defer eventsMutex.Unlock()
@@ -147,55 +149,53 @@ func addEvent(msg EventType, t time.Time) {
 }
 
 func main() {
+
 	bot, err = tgbotapi.NewBotAPI(os.Getenv("TELEGRAM_API_KEY"))
-
-	logFile, err := os.OpenFile("bot.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
-	if err != nil {
-		log.Fatalf("Failed to open log file: %v", err)
-	}
-	defer logFile.Close()
-
-	// Create a multi-writer to write to both stdout and the file
-	multiWriter := io.MultiWriter(os.Stdout, logFile)
-
-	// Set the log output
-	log.SetOutput(multiWriter)
-
 	if err != nil {
 		// Abort if something is wrong
 		log.Panicf("Error creating bot. %s", err)
 	}
 	events = getEventsFromLastTwoFiles()
+
 	// Set this to true to log all interactions with telegram servers
 	bot.Debug = false
 
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60
 
-	// Create a new cancellable background context. Calling `cancel()` leads to the cancellation of the context
-	ctx := context.Background()
-	ctx, cancel := context.WithCancel(ctx)
+	// Create context
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// listen to system signals (e.g., Ctrl+C) to kill bot
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigChan
+		log.Println("Received termination signal, shutting down...")
+		cancel()
+	}()
 
 	// `updates` is a golang channel which receives telegram updates
 	updates := bot.GetUpdatesChan(u)
 
-	// Pass cancellable context to goroutine
-	go receiveUpdates(ctx, updates)
+	// Run the recieve go routine and wait
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go receiveUpdates(ctx, &wg, updates)
+	wg.Wait()
 
-	// Tell the user the bot is online
-	log.Println("Start listening for updates. Press enter to stop")
-
-	// Wait for a newline symbol, then cancel handling updates
-	bufio.NewReader(os.Stdin).ReadBytes('\n')
-	cancel()
-
+	log.Println("Bot shutdown complete")
 }
 
-func receiveUpdates(ctx context.Context, updates tgbotapi.UpdatesChannel) {
+// Function to handle context and process Telegram messages
+func receiveUpdates(ctx context.Context, wg *sync.WaitGroup, updates tgbotapi.UpdatesChannel) {
+	defer wg.Done()
 	for {
 		select {
 		// stop looping if ctx is cancelled
 		case <-ctx.Done():
+			log.Println("Message update receiver got completed context")
 			return
 		// receive update from channel and then handle it
 		case update := <-updates:
@@ -228,7 +228,6 @@ func handleMessage(message *tgbotapi.Message) {
 		return
 	}
 
-	// Print to console
 	log.Printf("%s wrote %s at %s", user.FirstName, text, messageTime.Format("15:04:05"))
 
 	var err error
@@ -382,7 +381,6 @@ func handleButton(query *tgbotapi.CallbackQuery) {
 	bot.Send(msg)
 }
 
-// TODO make a menu struct that can be passed in here
 func sendMenu(chatId int64, menu Menu) error {
 	msg := tgbotapi.NewMessage(chatId, menu.Text)
 	msg.ParseMode = tgbotapi.ModeHTML
