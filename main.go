@@ -16,12 +16,13 @@ import (
 )
 
 const (
-	EventFeed      EventType = "feed"
-	EventFeedL     EventType = "feed L"
-	EventFeedR     EventType = "feed R"
-	EventNappyPoo  EventType = "nappy poo"
-	EventNappyWee  EventType = "nappy wee"
-	EventNappyBoth EventType = "nappy poo and wee"
+	eventsBufferSize           = 100
+	EventFeed        EventType = "feed"
+	EventFeedL       EventType = "feed L"
+	EventFeedR       EventType = "feed R"
+	EventNappyPoo    EventType = "nappy poo"
+	EventNappyWee    EventType = "nappy wee"
+	EventNappyBoth   EventType = "nappy poo and wee"
 )
 
 type EventType string
@@ -142,6 +143,10 @@ func saveEventsToFile() {
 func addEvent(msg EventType, t time.Time) {
 	eventsMutex.Lock()
 	newEvent := Event{ID: len(events) + 1, Event: msg, Time: t}
+
+	if len(events) >= eventsBufferSize {
+		events = events[1:]
+	}
 	events = append(events, newEvent)
 	eventsMutex.Unlock()
 
