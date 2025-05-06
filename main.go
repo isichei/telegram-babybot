@@ -23,6 +23,8 @@ const (
 	EventNappyPoo    EventType = "nappy poo"
 	EventNappyWee    EventType = "nappy wee"
 	EventNappyBoth   EventType = "nappy poo and wee"
+	EventSleep		 EventType = "sleep"
+	EventUnknown     EventType = ""
 )
 
 type EventType string
@@ -252,12 +254,24 @@ func handleMessage(message *tgbotapi.Message) {
 			tgbotapi.NewInlineKeyboardRow(
 				tgbotapi.NewInlineKeyboardButtonData("Last 24 hours of feeds?", "feed24"),
 			),
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("Last 24 hours of sleeps?", "sleep24"),
+			),
 		),
 	}
 
-	// If word feed is sent then send a feeding menu choice
 	eventClassification := parseEventTypeFromUserMsg(text)
-	if eventClassification != "" {
+	
+	// Parse time from message if it contains @ HH:MM format
+	messageTimeOverride := parseTimeFromMessage(text)
+	if messageTimeOverride != nil {
+		messageTime = *messageTimeOverride
+	}
+
+	if eventClassification == EventSleep {
+		// KI-TODO
+		handleSleep(eventClassification, messageTime, message.Chat.ID)
+	} else if eventClassification != EventUnknown {
 		handleFeedOrNappyEvent(eventClassification, messageTime, message.Chat.ID)
 	} else if strings.HasPrefix(text, "stats") {
 		err = sendMenu(message.Chat.ID, statsMenu)
@@ -276,29 +290,73 @@ func handleMessage(message *tgbotapi.Message) {
 	}
 }
 
+func parseTimeFromMessage(text string) *time.Time {
+	if !strings.Contains(text, " @ ") {
+		return nil
+	}
+
+	// Extract time part after @
+	parts := strings.Split(text, " @ ")
+	if len(parts) != 2 {
+		return nil
+	}
+
+	// Try to parse time in 24h format
+	timeStr := strings.TrimSpace(parts[1])
+	t, err := time.Parse("15:04", timeStr)
+	if err != nil {
+		return nil
+	}
+
+	// Get current time in London timezone
+	loc, _ := time.LoadLocation("Europe/London")
+	now := time.Now().In(loc)
+
+	// Construct full datetime using today's date
+	result := time.Date(
+		now.Year(), now.Month(), now.Day(),
+		t.Hour(), t.Minute(), 0, 0,
+		loc,
+	)
+
+	// If parsed time is in future, assume it was from yesterday
+	if result.After(now) {
+		result = result.AddDate(0, 0, -1)
+	}
+
+	return &result
+}
+
 func parseEventTypeFromUserMsg(msg string) EventType {
 	// is this a feed message
 	if strings.HasPrefix(msg, "feed") {
 		if strings.Contains(msg, " r") {
-			return "feed R"
+			return EventFeedR
 		} else if strings.Contains(msg, " l") {
-			return "feed L"
+			return EventFeedL
 		} else {
-			return "feed"
+			return EventFeed
 		}
 	}
 	if strings.HasPrefix(msg, "nappy") {
 		if (strings.Contains(msg, "wee") && strings.Contains(msg, "poo")) || strings.Contains(msg, "wp") {
-			return "nappy poo and wee"
+			return EventNappyBoth
 		} else if strings.Contains(msg, "wee") {
-			return "nappy wee"
+			return EventNappyWee
 		} else if strings.Contains(msg, "poo") {
-			return "nappy poo"
+			return EventNappyPoo
 		} else {
-			return "nappy poo and wee"
+			return EventNappyBoth
 		}
 	}
-	return ""
+	if strings.HasPrefix(msg, "sleep") {
+		return EventSleep
+	}
+	return EventUnknown
+}
+
+func handleSleep(eventClassification, messageTime, message.Chat.ID) {
+// TODO
 }
 
 func handleFeedOrNappyEvent(eventClassication EventType, messageTime time.Time, chatId int64) {
@@ -332,23 +390,24 @@ func getLastEventResp(filterBy string) string {
 	return eventToString(event, false)
 }
 
-func getLastEvents(filterBy string) []Event {
-	dayBefore := time.Now().Add(-24 * time.Hour)
+func getLastEvents(filterBy string, since time.Time) []Event {
+	
+	since
 	filteredEvents := []Event{}
 	if len(events) == 0 {
 		return filteredEvents
 	}
 
 	for _, event := range events {
-		if event.Time.After(dayBefore) && strings.HasPrefix(string(event.Event), filterBy) {
+		if event.Time.After(since) && strings.HasPrefix(string(event.Event), filterBy) {
 			filteredEvents = append(filteredEvents, event)
 		}
 	}
 	return filteredEvents
 }
 
-func getLastEventsResp(filterBy string) string {
-	events24 := getLastEvents(filterBy)
+func getLastEventsResp(filterBy string, sinse time.Time) string {
+	events24 := getLastEvents(filterBy, sinse)
 	botResponse := ""
 	for _, event := range events24 {
 		botResponse += fmt.Sprintf("%s    (%d)\n", eventToString(event, false), event.ID)
@@ -368,11 +427,16 @@ func handleButton(query *tgbotapi.CallbackQuery) {
 		botResponse = getLastEventResp("feed")
 		log.Println("Sending last feed")
 	case "nappy24":
-		botResponse = getLastEventsResp("nappy")
+		botResponse = getLastEventsResp("nappy", time.Now().Add(-24 * time.Hour))
 		log.Println("Sending the last nappy events over the last 24h")
 	case "feed24":
-		botResponse = getLastEventsResp("feed")
+		botResponse = getLastEventsResp("feed", time.Now().Add(-24 * time.Hour))
 		log.Println("Sending the last feed events over the last 24h")
+	case "sleepToday":
+		now := time.Now()
+		midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+		botResponse = getLastEventsResp("sleep", midnight)
+		log.Println("Sending the last sleep events for today")
 	default:
 		log.Println("You shouldn't be here")
 	}
