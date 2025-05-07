@@ -23,7 +23,8 @@ const (
 	EventNappyPoo    EventType = "nappy poo"
 	EventNappyWee    EventType = "nappy wee"
 	EventNappyBoth   EventType = "nappy poo and wee"
-	EventSleep		 EventType = "sleep"
+	EventSleepStart		 EventType = "sleep start"
+	EventSleepEnd		 EventType = "sleep end"
 	EventUnknown     EventType = ""
 )
 
@@ -45,6 +46,9 @@ var (
 	err         error
 	events      []Event
 	eventsMutex sync.Mutex
+	allNappyEvents = []EventType{EventNappyPoo, EventNappyWee, EventNappyBoth}
+	allFeedEvents = []EventType{EventFeed, EventFeedR, EventFeedL}
+	allSleepEvents = []EventType{EventSleepStart, EventSleepEnd}
 )
 
 func eventToString(event Event, system bool) string {
@@ -268,8 +272,7 @@ func handleMessage(message *tgbotapi.Message) {
 		messageTime = *messageTimeOverride
 	}
 
-	if eventClassification == EventSleep {
-		// KI-TODO
+	if contains(allSleepEvents, eventClassification) {
 		handleSleep(eventClassification, messageTime, message.Chat.ID)
 	} else if eventClassification != EventUnknown {
 		handleFeedOrNappyEvent(eventClassification, messageTime, message.Chat.ID)
@@ -349,19 +352,40 @@ func parseEventTypeFromUserMsg(msg string) EventType {
 			return EventNappyBoth
 		}
 	}
-	if strings.HasPrefix(msg, "sleep") {
-		return EventSleep
+	if strings.HasPrefix(msg, "sleep") && strings.Contains(msg, "start") {
+		return EventSleepStart
+	}
+	if strings.HasPrefix(msg, "sleep") && strings.Contains(msg, "end") {
+		return EventSleepEnd
 	}
 	return EventUnknown
 }
 
-func handleSleep(eventClassification, messageTime, message.Chat.ID) {
-// TODO
+func handleSleep(eventClassification EventType, messageTime time.Time, chatId int64) {
+	var replyText string
+
+	
+	lastEvent := getLastEvent(allSleepEvents)
+	if eventClassification == EventSleepStart && lastEvent.Event == EventSleepStart {
+		replyText = fmt.Sprintf("Last recorded sleep start @ %s was not ended. Send a 'sleep end @ HH:SS' to end it before starting a new sleep.", messageTime.Format(time.Kitchen))
+	} else if eventClassification == EventSleepEnd && lastEvent.Event == EventSleepEnd {
+		replyText = "No sleep start was recorded so cannot end. Send a 'sleep start @ HH:SS' first before ending it."
+	} else {
+		replyText = fmt.Sprintf("%s recorded at %s. ", eventClassification, messageTime.Format(time.Kitchen))
+		addEvent(eventClassification, messageTime)
+	}
+	// Create a message to echo back
+	msg := tgbotapi.NewMessage(chatId, replyText)
+
+	// Send the message
+	if _, err := bot.Send(msg); err != nil {
+		log.Println("Error sending message:", err)
+	}
 }
 
-func handleFeedOrNappyEvent(eventClassication EventType, messageTime time.Time, chatId int64) {
-	addEvent(eventClassication, messageTime)
-	replyText := fmt.Sprintf("%s recorded at %s. ", eventClassication, messageTime.Format(time.Kitchen))
+func handleFeedOrNappyEvent(eventClassification EventType, messageTime time.Time, chatId int64) {
+	addEvent(eventClassification, messageTime)
+	replyText := fmt.Sprintf("%s recorded at %s. ", eventClassification, messageTime.Format(time.Kitchen))
 
 	// Create a message to echo back
 	msg := tgbotapi.NewMessage(chatId, replyText)
@@ -372,45 +396,44 @@ func handleFeedOrNappyEvent(eventClassication EventType, messageTime time.Time, 
 	}
 }
 
-func getLastEvent(filterBy string) Event {
+func getLastEventResp(filterBy []EventType) string {
+	event := getLastEvent(filterBy)
+	return eventToString(event, false)
+}
+
+func getLastEvent(filterBy []EventType) Event {
 	if len(events) == 0 {
 		return Event{}
 	}
 	lastEvent := events[0]
 	for _, event := range events {
-		if event.Time.After(lastEvent.Time) && strings.HasPrefix(string(event.Event), filterBy) {
+		if event.Time.After(lastEvent.Time) && contains(filterBy, event.Event) {
 			lastEvent = event
 		}
 	}
 	return lastEvent
 }
 
-func getLastEventResp(filterBy string) string {
-	event := getLastEvent(filterBy)
-	return eventToString(event, false)
-}
-
-func getLastEvents(filterBy string, since time.Time) []Event {
+func getLastEvents(filterBy []EventType, since time.Time) []Event {
 	
-	since
 	filteredEvents := []Event{}
 	if len(events) == 0 {
 		return filteredEvents
 	}
 
 	for _, event := range events {
-		if event.Time.After(since) && strings.HasPrefix(string(event.Event), filterBy) {
+		if event.Time.After(since) && contains(filterBy, event.Event) {
 			filteredEvents = append(filteredEvents, event)
 		}
 	}
 	return filteredEvents
 }
 
-func getLastEventsResp(filterBy string, sinse time.Time) string {
+func getLastEventsResp(filterBy []EventType, sinse time.Time) string {
 	events24 := getLastEvents(filterBy, sinse)
 	botResponse := ""
 	for _, event := range events24 {
-		botResponse += fmt.Sprintf("%s    (%d)\n", eventToString(event, false), event.ID)
+		botResponse += fmt.Sprintf("%s\n", eventToString(event, false))
 	}
 	return botResponse
 }
@@ -421,21 +444,21 @@ func handleButton(query *tgbotapi.CallbackQuery) {
 
 	switch query.Data {
 	case "nappy":
-		botResponse = getLastEventResp("nappy")
+		botResponse = getLastEventResp(allNappyEvents)
 		log.Println("Sending last nappy")
 	case "feed":
-		botResponse = getLastEventResp("feed")
+		botResponse = getLastEventResp(allFeedEvents)
 		log.Println("Sending last feed")
 	case "nappy24":
-		botResponse = getLastEventsResp("nappy", time.Now().Add(-24 * time.Hour))
+		botResponse = getLastEventsResp(allNappyEvents, time.Now().Add(-24 * time.Hour))
 		log.Println("Sending the last nappy events over the last 24h")
 	case "feed24":
-		botResponse = getLastEventsResp("feed", time.Now().Add(-24 * time.Hour))
+		botResponse = getLastEventsResp(allFeedEvents, time.Now().Add(-24 * time.Hour))
 		log.Println("Sending the last feed events over the last 24h")
 	case "sleepToday":
 		now := time.Now()
 		midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-		botResponse = getLastEventsResp("sleep", midnight)
+		botResponse = getLastEventsResp(allSleepEvents, midnight)
 		log.Println("Sending the last sleep events for today")
 	default:
 		log.Println("You shouldn't be here")
@@ -456,4 +479,13 @@ func sendMenu(chatId int64, menu Menu) error {
 	msg.ReplyMarkup = menu.Markup
 	_, err := bot.Send(msg)
 	return err
+}
+
+func contains(events []EventType, event EventType) bool {
+    for _, e := range events {
+        if e == event {
+            return true
+        }
+    }
+    return false
 }
