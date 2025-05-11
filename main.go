@@ -268,7 +268,7 @@ func handleMessage(message *tgbotapi.Message, events *EventStore) {
 				tgbotapi.NewInlineKeyboardButtonData("Last 24 hours of feeds?", "feed24"),
 			),
 			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData("Last 24 hours of sleeps?", "sleep24"),
+				tgbotapi.NewInlineKeyboardButtonData("Last 48 hours of sleeps?", "sleep48"),
 			),
 		),
 	}
@@ -491,11 +491,9 @@ func handleButton(query *tgbotapi.CallbackQuery, eStore *EventStore) {
 	case "feed24":
 		botResponse = getLastEventsResp(eStore.events, allFeedEvents, time.Now().Add(-24*time.Hour))
 		log.Println("Sending the last feed events over the last 24h")
-	case "sleepToday":
-		now := time.Now()
-		midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-		botResponse = getLastEventsResp(eStore.events, allSleepEvents, midnight)
-		log.Println("Sending the last sleep events for today")
+	case "sleep48":
+		botResponse = getLastEventsResp(eStore.events, allSleepEvents, time.Now().Add(-48*time.Hour))
+		log.Println("Sending the last sleep events over the last 48h")
 	default:
 		log.Println("You shouldn't be here")
 	}
